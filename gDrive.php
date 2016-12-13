@@ -156,7 +156,23 @@ class gDrive {
 
       return $file->id;
    }
-
+   
+   public function copy($source, $dest){
+      $gid = $this->mkdir(dirname($dest));
+      if (!empty($gid)){
+         if (filesize($source) < 5*1024*1024){
+            $id = $this->file_put_contents($source, $gid);
+         }
+         else {
+            $id = $this->largeUpload($source, $gid);
+         }
+         return $id;
+      }
+      else {
+         return false;
+      }
+   }
+   
    public function mkdir($name, $level=0, $p=""){
       $name           = rtrim($name, "/");
       if (!isset($this->paths[$name])){
