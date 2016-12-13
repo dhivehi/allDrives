@@ -1,5 +1,5 @@
 # gDrive
-PHP google drive client
+A very simple google drive client in PHP
 
 ## Usage
 ```php
