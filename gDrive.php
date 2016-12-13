@@ -1,7 +1,7 @@
 <?php
 namespace Dhivehi;
 class gDrive {
-   private $credentialsPath   = "/var/www/html/home/cron/gdrive/.credentials/drive-php-quickstart.json";
+   private $credentialsPath   = "/path/to/credentials.json";
    public $paths              = array();
    public function __construct() {
       $client        = new \Google_Client();
