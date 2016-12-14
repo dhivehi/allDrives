@@ -1,7 +1,7 @@
 <?php
 namespace Dhivehi;
 class gDrive {
-   private $credentialsPath   = "/path/to/credentials.json";
+   private $credentialsPath   = "/path/to/store/token.json";
    public $paths              = array();
    public function __construct() {
       $client        = new \Google_Client();
