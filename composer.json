@@ -1,0 +1,21 @@
+{
+   "name": "dhivehi/gDrive",
+   "type": "library",
+   "keywords": ["google", "drive", "cloud", "sync"],
+   "license": "Apache",
+   "require": {
+      "google/apiclient": "^2.0",
+   }
+   ,
+   "authors": [
+   {
+      "name": "DhivehiMv",
+      "email": "admin@dhivehi.mv"
+   }
+   ],
+   "autoload": {
+      "psr-4": {
+         "Dhivehi\\":"src/"
+      }
+   }
+}
