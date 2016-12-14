@@ -1,5 +1,6 @@
 {
    "name": "dhivehi/gDrive",
+   "version": "1.0.0",
    "type": "library",
    "keywords": ["google", "drive", "cloud", "sync"],
    "license": "Apache",
@@ -17,10 +18,5 @@
       "psr-4": {
          "Dhivehi\\":"src/"
       }
-   },
-   "extra": {
-        "branch-alias": {
-            "dev-master": "1.x-dev"
-        }
-    }
+   }
 }
