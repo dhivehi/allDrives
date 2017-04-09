@@ -1,229 +1,430 @@
 <?php
 namespace Dhivehi;
 class gDrive {
-   private $credentialsPath   = "/path/to/store/token.json";
-   public $paths              = array();
-   public function __construct() {
-      $client        = new \Google_Client();
-      $client->setClientId(YOUR_CLIENT_ID);
-      $client->setClientSecret(YOUR_CLIENT_SECRETE);
-      $client->setRedirectUri(YOUR_REDIRECT_URI);
-      $client->setApplicationName('PHP');
-      $client->setScopes(array('https://www.googleapis.com/auth/drive'));
-      $client->setAccessType('offline');
-      $client->setApprovalPrompt('force');
-
-      if (file_exists($this->credentialsPath)) {
-         $accessToken = json_decode(file_get_contents($this->credentialsPath), true);
+   private $client_id            = "YOUR_CLIENT_ID";
+   private $client_secret        = "YOUR_CLIENT_SECRETE";
+   private $tokenStore           = "/path/to/store/token.json";
+   private $redirect_uri         = "YOUR_REDIRECT_URI"; //use: $_SERVER["SERVER_PROTOCOL"]."://".$_SERVER["HTTP_HOST"].$_SERVER["PHP_SELF"];
+   public $paths                 = array();
+   public function __construct($ts){
+      if ($ts){
+         $this->tokenStore       = $ts;
+      }
+      if ($this->has_token()) {
+         $this->token            = json_decode($this->get_token(), 1);
       }
       else if (isset($_GET['code'])){
-         $accessToken = $client->fetchAccessTokenWithAuthCode($_GET['code']);
-         file_put_contents($this->credentialsPath, json_encode($accessToken));
+         $ch = curl_init();
+         curl_setopt($ch, CURLOPT_URL, "https://accounts.google.com/o/oauth2/token");
+         curl_setopt($ch, CURLOPT_POST, true);
+         curl_setopt($ch, CURLOPT_POSTFIELDS, array(
+         "code"          => $_GET['code'],
+         "client_id"     => $this->client_id,
+         "client_secret" => $this->client_secret,
+         "redirect_uri"  => $this->redirect_uri,
+         "grant_type"    => "authorization_code"
+         ));
+         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+         $output         = curl_exec($ch);
+         $info           = curl_getinfo($ch);
+         curl_close($ch);
+         if ($info['http_code'] == 200){
+            $this->token            = json_decode($output, 1);
+            $this->token['created'] = time();
+            $this->put_token(json_encode($this->token));
+         }
+         else {
+            echo "Error: $output\n";
+         }
       }
       else {
-         $authUrl = $client->createAuthUrl();
+         $authUrl = $this->createAuthUrl();
          header("Location: ".$authUrl);
          exit;
       }
-      $client->setAccessToken($accessToken);
-      $this->client  = $client;
-      $this->checkToken();
-      $this->service = new \Google_Service_Drive($client);
+   }
+
+   public function has_token()
+   {
+      return file_exists($this->tokenStore);
+   }
+   
+   public function get_token()
+   {
+      return file_get_contents($this->tokenStore);
+   }
+
+   public function put_token($data)
+   {
+      return file_put_contents($this->tokenStore, $data);
+   }
+
+   public function createAuthUrl(){
+      $params = array(
+      "response_type"   => "code",
+      "access_type"     => "offline",
+      "client_id"       => $this->client_id,
+      "redirect_uri"    => $this->redirect_uri,
+      "scope"           => "https://www.googleapis.com/auth/drive",
+      "approval_prompt" => "force"
+      );
+      return "https://accounts.google.com/o/oauth2/auth?".http_build_query($params);
+   }
+
+   public function refreshToken() {
+      $ch = curl_init();
+      curl_setopt($ch, CURLOPT_URL, "https://accounts.google.com/o/oauth2/token");
+      curl_setopt($ch, CURLOPT_POST, 1);
+      curl_setopt($ch, CURLOPT_POSTFIELDS, array(
+      "client_id"     => $this->client_id,
+      "client_secret" => $this->client_secret,
+      "refresh_token" => $this->token['refresh_token'],
+      "grant_type"    => "refresh_token"
+      ));
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+      curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+      $output         = curl_exec($ch);
+      $info           = curl_getinfo($ch);
+      curl_close($ch);
+      if ($info['http_code'] == 200){
+         $token                       = json_decode($output, 1);
+         $this->token['access_token'] = $token['access_token'];
+         $this->token['created']      = time();
+         if (isset($token['refresh_token'])){
+           $this->token['refresh_token'] = $token['refresh_token'];
+         }
+         $this->put_token(json_encode($this->token));
+      }
+      else {
+         echo "Error: $output\n"; 
+      }
    }
 
    public function checkToken(){
-      if ($this->client->isAccessTokenExpired()){
-         $refreshToken                       = $this->client->getRefreshToken();
-         $this->client->refreshToken($refreshToken);
-         $newAccessToken                     = $this->client->getAccessToken();
-         if (!isset($newAccessToken['refresh_token'])){
-            $newAccessToken['refresh_token'] = $refreshToken;
-         }
-         file_put_contents($this->credentialsPath, json_encode($newAccessToken));
+      $expireTime = $this->token['created']+$this->token['expires_in'];
+      if ($expireTime - time() < (10*60)){
+         $this->refreshToken();
       }
    }
 
-   public function scandir($dir="root"){
-      $optParams = array(
-      'q'        => "'$dir' in parents and trashed = false",
-      // 'pageSize' => 100,
-      'fields'   => 'files(id, name, mimeType, kind, parents)'
-      );
-      $items   = array();
-      $results = $this->service->files->listFiles($optParams);
-      foreach ($results->getFiles() as $file) {
-         $items[] = array("id"=>$file->getId(), "name"=>$file->getName(), "type"=>$file->getMimeType(), "parents"=>$file->getParents());
+   public function handleError($output){
+      if (isset($output['error'])){
+         print_r($output);
+         echo "Process terminated.\n";
+         exit;
       }
-      return $items;
    }
 
    public function is_dir($name, $dir="root"){
-      //https://developers.google.com/drive/v3/web/mime-types
-      //https://developers.google.com/drive/v3/web/search-parameters#examples
+      $this->checkToken();
       $optParams = array(
-      'q'        => "name = '$name' and mimeType = 'application/vnd.google-apps.folder' and '$dir' in parents and trashed = false",
+      'q'        => "name = '".addslashes($name)."' and mimeType = 'application/vnd.google-apps.folder' and '$dir' in parents and trashed = false",
       'fields'   => 'files(id, name, mimeType, kind, parents)'
       );
-      $items   = array();
-      $results = $this->service->files->listFiles($optParams);
-      foreach ($response->files as $file) {
-         $items[] = array("id"=>$file->id, "name"=>$file->name);
-      }
-      return $items;
+      $ch = curl_init();
+      curl_setopt($ch, CURLOPT_URL, "https://www.googleapis.com/drive/v3/files?".http_build_query($optParams));
+      curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+      curl_setopt($ch, CURLOPT_BINARYTRANSFER, TRUE);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+      "Authorization: Bearer ".$this->token['access_token']
+      ));
+      $output = json_decode(curl_exec($ch), 1);
+      curl_close($ch);
+      $this->handleError($output);
+      return (isset($output['files'])&&sizeof($output['files'])>0?$output['files'][0]['id']:false);
    }
 
    public function is_file($name, $mime, $parent="root"){
+      $this->checkToken();
       $optParams = array(
-      'q'        => "name = '$name' and mimeType = '$mime' and '$parent' in parents and trashed = false",
+      'q'        => "name = '".addslashes($name)."' and mimeType = '$mime' and '$parent' in parents and trashed = false",
       'fields'   => 'files(id, name, mimeType, kind, parents)'
       );
-      $items   = array();
-      $results = $this->service->files->listFiles($optParams);
 
-      foreach ($response->files as $file) {
-         $items[] = array("id"=>$file->id, "name"=>$file->name);
-      }
-      return $items;
+      $ch = curl_init();
+      curl_setopt($ch, CURLOPT_URL, "https://www.googleapis.com/drive/v3/files?".http_build_query($optParams));
+      curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+      curl_setopt($ch, CURLOPT_BINARYTRANSFER, TRUE);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+      "Authorization: Bearer ".$this->token['access_token']
+      ));
+      $output = json_decode(curl_exec($ch), 1);
+      curl_close($ch);
+      $this->handleError($output);
+      return (isset($output['files'])&&sizeof($output['files'])>0?$output['files'][0]['id']:false);
    }
 
-   public function readVideoChunk($handle, $chunkSize)
-   {
-      $byteCount = 0;
-      $giantChunk = "";
-      while (!feof($handle)) {
-         // fread will never return more than 8192 bytes if the stream is read buffered and it does not represent a plain file
-         $chunk = fread($handle, 1 * 1024 * 1024);
-         $byteCount += strlen($chunk);
-         $giantChunk .= $chunk;
-         if ($byteCount >= $chunkSize)
-         {
-            return $giantChunk;
-         }
-      }
-      return $giantChunk;
-   }
-
-   public function largeUpload($path, $parent="root"){
-      $childs         = $this->is_file(basename($path), mime_content_type($path), $parent);
-
-      $file           = new \Google_Service_Drive_DriveFile();
-      $file->name     = basename($path);
-      $file->parents  = array($parent);
-      $file->mimeType = mime_content_type($path);
-
-      $chunkSizeBytes = 10 * 1024 * 1024;
-      $this->client->setDefer(true);
-      $request        = $this->service->files->create($file);
-      $media          = new \Google_Http_MediaFileUpload($this->client, $request, mime_content_type($path), null, true, $chunkSizeBytes);
-      $media->setFileSize(filesize($path));
-
-      $status         = false;
-      $handle         = fopen($path, "rb");
-      while (!$status && !feof($handle)) {
-         $chunk       = $this->readVideoChunk($handle, $chunkSizeBytes);
-         $status      = $media->nextChunk($chunk);
-      }
-      $result = false;
-      if ($status != false) {
-         $result = $status;
-      }
-      fclose($handle);
-
-      if ($result->id && sizeof($childs) > 0){
-         $a = $this->service->files->delete($childs[0]['id']);
-      }
-
-      return $result->id;
-   }
-   public function file_put_contents($path, $parent="root"){
-
-      $childs = $this->is_file(basename($path), mime_content_type($path), $parent);
-
-      $meta         = array('name'=>basename($path), 'parents'=>array($parent), 'mimeType'=>mime_content_type($path));
-
-      $fileMetadata = new \Google_Service_Drive_DriveFile($meta);
-
-      $file         = $this->service->files->create($fileMetadata, array(
-      'data'       => file_get_contents($path),
-      'mimeType'   => mime_content_type($path),
-      'uploadType' => 'multipart',
-      'fields'     => 'id')
-      );
-
-      if ($file->id && sizeof($childs) > 0){
-         $this->service->files->delete($childs[0]['id']);
-      }
-
-      return $file->id;
-   }
-   
-   public function copy($source, $dest){
-      $gid = $this->mkdir(dirname($dest));
-      if (!empty($gid)){
-         if (filesize($source) < 5*1024*1024){
-            $id = $this->file_put_contents($source, $gid);
-         }
-         else {
-            $id = $this->largeUpload($source, $gid);
-         }
-         return $id;
+   public function create_dir($name, $pid="root"){
+      $check = $this->is_dir($name, $pid);
+      if ($check){
+         return $check;
       }
       else {
-         return false;
-      }
-   }
-   
-   public function mkdir($name, $level=0, $p=""){
-      $name           = rtrim($name, "/");
-      if (!isset($this->paths[$name])){
-         $level       += 1;
-         $parts       = explode("/", $name);
-         $folder      = $parts[$level];
-         $pid         = ($p==""?"root":$this->paths[$p]);
-         $path        = $p."/".$folder;
-
-         $optParams = array(
-         'q'        => "'$pid' in parents and name = '$folder' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
-         'fields'   => 'files(id, name, mimeType, kind, parents)'
+         $postdata     = array(
+         'name'     => $name,
+         'parents'  => array($pid),
+         'mimeType' => "application/vnd.google-apps.folder"
          );
 
-         $results     = $this->service->files->listFiles($optParams);
-         $childs      = $results->getFiles();
+         $ch = curl_init();
+         curl_setopt($ch, CURLOPT_URL, "https://www.googleapis.com/drive/v3/files");
+         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+         curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+         curl_setopt($ch, CURLOPT_BINARYTRANSFER, TRUE);
+         curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+         "Content-Type: application/json",
+         "Authorization: Bearer ".$this->token['access_token']
+         ));
+         curl_setopt($ch, CURLOPT_POST, true);
+         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postdata));
 
-         if (count($childs) > 0){
-            $file    = $childs[0];
-            $this->paths[$path] = $file->getId();
-            if (isset($parts[$level+1])){
-               $this->mkdir($name, $level, $path);
-            }
-         }
-         else {
-            $fileMetadata       = new \Google_Service_Drive_DriveFile(array(
-            'name'=>$folder, 'parents'=>array($pid), 'mimeType' => "application/vnd.google-apps.folder")
-            );
-            $file               = $this->service->files->create($fileMetadata, array('fields' => 'id'));
+         $output = json_decode(curl_exec($ch), 1);
+         curl_close($ch);
+         $this->handleError($output);
+         return (isset($output['id'])?$output['id']:false);
+      }
+   }
 
-            if (isset($file->id)){
-               $this->paths[$path] = $file->id;
-               if (isset($parts[$level+1])){
-                  $this->mkdir($name, $level, $path);
-               }
-            }
-            else {
-               echo "\nerror creating dir: $path\n";
-               print_r($file);
-               exit;
-            }
-         }
+   public function simpleUpload($localpath, $pid="root"){
+      $name  = basename($localpath);
+      $mime  = mime_content_type($localpath);
+      $postdata    = array('name' => $name, 'parents' => array($pid));
+      $boundary    = "---------------------".md5(mt_rand().microtime());
+      $post        = array();
+      $post[]      = implode("\r\n", array("Content-Type: application/json; charset=UTF-8", "", json_encode($postdata)));
+      $post[]      = implode("\r\n", array("Content-Type: $mime", "", file_get_contents($localpath)));
+
+      array_walk($post, function (&$part) use ($boundary) {
+         $part = "--{$boundary}\r\n{$part}";
       }
-      if (isset($this->paths[$name])){
-         return $this->paths[$name];
+      );
+
+      $post[]      = "--{$boundary}--";
+      $post[]      = "";
+
+      $ch = curl_init();
+      curl_setopt($ch, CURLOPT_URL, "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart");
+      curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+      curl_setopt($ch, CURLOPT_BINARYTRANSFER, TRUE);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+      "Authorization: Bearer ".$this->token['access_token'],
+      "Content-Type: multipart/related; boundary=".$boundary
+      ));
+      curl_setopt($ch, CURLOPT_POST, true);
+      curl_setopt($ch, CURLOPT_POSTFIELDS, implode("\r\n", $post));
+      curl_setopt($ch, CURLINFO_HEADER_OUT, true);
+      $oo      = curl_exec($ch);
+      $output  = json_decode($oo, 1);
+      curl_close($ch);
+      $this->handleError($output);
+      return (isset($output['id'])?$output['id']:false);
+   }
+   public function get_headers_from_curl_response($response)
+   {
+      $headers     = array();
+      $header_text = substr($response, 0, strpos($response, "\r\n\r\n"));
+      foreach (explode("\r\n", $header_text) as $i => $line)
+      if ($i === 0){
+         $headers['http_code'] = $line;
       }
-      else if ($name==""){
-         return "root";
+      else
+      {
+         list($key, $value) = explode(': ', $line);
+         $headers[$key] = $value;
+      }
+      return $headers;
+   }
+
+   public function chunkUpload($localpath, $pid="root"){
+      $chunksize   = 100*1024*1024;
+      $name        = basename($localpath);
+      $mime        = mime_content_type($localpath);
+      $size        = filesize($localpath);
+      $postdata    = array('name' => $name, 'parents' => array($pid));
+
+      $ch          = curl_init();
+      curl_setopt($ch, CURLOPT_URL, "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable");
+      curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+      curl_setopt($ch, CURLOPT_BINARYTRANSFER, 1);
+      curl_setopt($ch, CURLOPT_HEADER, 1);
+      curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+      "Authorization: Bearer ".$this->token['access_token'],
+      "Content-Type: application/json; charset=UTF-8",
+      "X-Upload-Content-Type: $mime",
+      "X-Upload-Content-Length: $size"
+      ));
+      curl_setopt($ch, CURLOPT_POST, true);
+      curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postdata));
+      //curl_setopt($ch, CURLINFO_HEADER_OUT, true);
+      $response      = curl_exec($ch);
+      curl_close($ch);
+      $headers       = $this->get_headers_from_curl_response($response);
+      $location      = $headers['Location'];
+      //--------------------------------------------------------------------------------------------------------------------
+      if (!isset($headers['Location'])){
+         print_r($headers);
       }
       else {
-         return false;
+         $maxChunks      = ceil($size/$chunksize);
+
+         for ($c=1; $c<=$maxChunks; $c++){
+            $chunks[] = $c;
+         }
+
+         $file           = fopen($localpath, "rb");
+         foreach($chunks as $chunk){
+            $start       = ($chunk-1)*$chunksize;
+            $end         = ($chunk)*$chunksize;
+            if ($end > $size){
+               $end      = $size;
+            }
+            fseek($file, $start);
+            $ch          = curl_init();
+            curl_setopt($ch, CURLOPT_URL, $location);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+            curl_setopt($ch, CURLOPT_BINARYTRANSFER, 1);
+            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "PUT");
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+            "Authorization: Bearer ".$this->token['access_token'],
+            "Content-Type: $mime",
+            "Content-Length: ".($end-$start),
+            "Content-Range: bytes ".$start."-".($end-1)."/".$size
+            ));
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, fread($file, ($end-$start)));
+            $out         = curl_exec($ch);
+            curl_close($ch);
+         }
+         fclose($file);
+         $res = json_decode($out, 1);
+         return $res['id'];
       }
+   }
+   public function scandir($remotepath){
+      $this->checkToken();
+      $remotepath  = trim($remotepath,"/");
+      if ($remotepath){
+        $dir       = $this->mkdir($remotepath);
+      } else {
+        $dir       = "root";
+      }
+      $optParams = array(
+      'q'        => "'$dir' in parents and trashed = false",
+      'fields'   => 'files(id, name, mimeType, kind, parents)'
+      );
+      $ch = curl_init();
+      curl_setopt($ch, CURLOPT_URL, "https://www.googleapis.com/drive/v3/files?".http_build_query($optParams));
+      curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+      curl_setopt($ch, CURLOPT_BINARYTRANSFER, TRUE);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+      "Authorization: Bearer ".$this->token['access_token']
+      ));
+      $output = json_decode(curl_exec($ch), 1);
+      curl_close($ch);
+      $this->handleError($output);
+      return $output;
+   }
+
+   public function mkdir($dir, $level=0, $pid="root")
+   {
+      $this->checkToken();
+      $dir     = trim($dir, "/");
+      $levels  = explode("/", $dir);
+      if (isset($levels[$level])){
+         $path = implode("/", array_slice($levels, 0, $level+1));
+         if (isset($this->paths[$path])){
+            $pid  = $this->paths[$path];
+         }
+         else {
+            $pid  = $this->create_dir($levels[$level], $pid);
+            $this->paths[$path] = $pid;
+         }
+      }
+
+      if ($pid && $level < sizeof($levels)){
+         $pid  = $this->mkdir($dir, $level+1, $pid);
+      }
+      return $pid;
+   }
+
+   public function upload($localpath, $remotepath){
+      $pid     = $this->mkdir(dirname($remotepath));
+      if ($pid){
+         $fid  = $this->is_file(basename($localpath), mime_content_type($localpath), $pid);
+         if (filesize($localpath) <= 100*1024*1024){
+            $nid = $this->simpleUpload($localpath, $pid);
+         }
+         else {
+            $nid = $this->chunkUpload($localpath, $pid);
+         }
+         if ($fid&&$nid){
+            $this->delete($fid);
+         }
+         return $nid;
+      }
+   }
+   public function download($fid)
+   {
+      $this->checkToken();
+      $ch          = curl_init();
+      curl_setopt($ch, CURLOPT_URL, "https://www.googleapis.com/drive/v3/files/$fid?alt=media");
+      curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+      curl_setopt($ch, CURLOPT_BINARYTRANSFER, 1);
+      curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+      "Authorization: Bearer ".$this->token['access_token']
+      ));
+      $out         = curl_exec($ch);
+      curl_close($ch);
+      return $out;
+   }
+   
+   public function trash($fid)
+   {
+      $this->checkToken();
+      $postdata    = array('trashed' => true);
+      $ch          = curl_init();
+      curl_setopt($ch, CURLOPT_URL, "https://www.googleapis.com/drive/v3/files/$fid");
+      curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+      curl_setopt($ch, CURLOPT_BINARYTRANSFER, 1);
+      curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "PATCH");
+      curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+      "Authorization: Bearer ".$this->token['access_token'],
+      "Content-Type: application/json; charset=UTF-8"
+      ));
+      curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postdata));
+      $out         = curl_exec($ch);
+      curl_close($ch);
+      return $out;
+   }
+   
+   public function delete($fid)
+   {
+      $this->checkToken();
+      $ch          = curl_init();
+      curl_setopt($ch, CURLOPT_URL, "https://www.googleapis.com/drive/v3/files/$fid");
+      curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+      curl_setopt($ch, CURLOPT_BINARYTRANSFER, 1);
+      curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "DELETE");
+      curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+      "Authorization: Bearer ".$this->token['access_token']
+      ));
+      $out         = curl_exec($ch);
+      curl_close($ch);
+      return $out;
    }
 }
