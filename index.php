@@ -1,5 +1,4 @@
 <?php
-include('./vendor/autoload.php');
 include('./src/gDrive.php');
 
 $gdrive    = new Dhivehi\gDrive();
