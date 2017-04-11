@@ -4,9 +4,10 @@ class gDrive {
    private $client_id            = "YOUR_CLIENT_ID";
    private $client_secret        = "YOUR_CLIENT_SECRETE";
    private $tokenStore           = "/path/to/store/token.json";
-   private $redirect_uri         = "YOUR_REDIRECT_URI"; //use: "http://".$_SERVER["HTTP_HOST"].$_SERVER["PHP_SELF"];
    public $paths                 = array();
+   
    public function __construct($ts){
+      $this->redirect_uri        = "YOUR_REDIRECT_URI"; //use:$_SERVER["REQUEST_SCHEME"]."://".$_SERVER["HTTP_HOST"].$_SERVER["PHP_SELF"];
       if ($ts){
          $this->tokenStore       = $ts;
       }
