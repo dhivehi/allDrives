@@ -1,5 +1,5 @@
 {
-    "name": "dhivehi/allDrives",
+    "name": "dhivehi/alldrives",
     "autoload": {
         "psr-4" : {
             "Dhivehi\\" : "src"
