@@ -1,5 +1,6 @@
 {
     "name": "dhivehi/alldrives",
+    "version": "dev-master",
     "autoload": {
         "psr-4" : {
             "Dhivehi\\" : "src"
